@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import unicodedata
 from datetime import datetime
-from pybaseball import pitching_stats, statcast, playerid_lookup
+from pybaseball import pitching_stats, statcast, playerid_lookup, team_batting
 
 # Helper to remove accents/diacritics
 def strip_accents(s: str) -> str:
@@ -96,7 +96,7 @@ agg = (
       .rename(columns={'player_name': 'Name'})
 )
 
-# 4. Standardize names for merge (“Last, First” → “First Last”) and strip accents
+# 4. Standardize names for merge ("Last, First" → "First Last") and strip accents
 def standardize_name(name: str) -> str:
     if ',' in name:
         last, first = name.split(', ')
@@ -142,4 +142,36 @@ df['BF_IP'] = df['BF'] / df['IP']
 print(f"Saving initial dataset to {csv_out}...")
 os.makedirs(data_dir, exist_ok=True)
 df.to_csv(csv_out, index=False)
-print("Done.")
+print("Done With Pitching Data.")
+
+# --- Scrape opponent (team) K% and save to CSV ---
+print("Fetching team batting stats for opponent K%...")
+try:
+    team_bat = team_batting(2025)  # Use 2024 if 2025 is not available
+except Exception as e:
+    print(f"Failed to fetch 2025 team batting stats, error: {e}. Trying 2024...")
+    team_bat = team_batting(2024)
+
+# Inspect columns to find K% (may be 'K%' or 'SO%')
+# print("Team batting columns:", team_bat.columns.tolist())
+
+# Try to find the right column for strikeout rate
+k_col = None
+for col in ['K%', 'SO%', 'SO/P']:
+    if col in team_bat.columns:
+        k_col = col
+        break
+if k_col is None:
+    raise KeyError("Could not find a K% column in team batting stats.")
+
+# Build DataFrame with team name and K%
+opp_k = team_bat[['Team', k_col]].copy()
+opp_k = opp_k.rename(columns={'Team': 'team_name', k_col: 'opp_K_pct'})
+
+# Convert K% to decimal if needed (e.g., '23.5%' -> 0.235)
+if opp_k['opp_K_pct'].dtype == object:
+    opp_k['opp_K_pct'] = opp_k['opp_K_pct'].str.rstrip('%').astype(float) / 100
+
+# Save to CSV
+opp_k.to_csv(os.path.join(data_dir, 'opponent_k_pct.csv'), index=False)
+print("Saved opponent K% to data/opponent_k_pct.csv")
